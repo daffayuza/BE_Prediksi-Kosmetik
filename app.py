@@ -4,7 +4,7 @@ import pandas as pd
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
 from database import SessionLocal
-from models import TrainingData, ModelStore
+from models import TrainingData, ModelStore, ModelEvaluation
 
 app = Flask(__name__)
 CORS(app)
@@ -98,6 +98,98 @@ def predict():
         return jsonify({"prediksi_terjual": round(prediksi)})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+    
+@app.route("/model-info", methods=["GET"])
+def model_info():
+    db = SessionLocal()
+    data_count = db.query(TrainingData).count()
+
+    model_data = db.query(ModelStore).order_by(ModelStore.id.desc()).first()
+    if not model_data:
+        return jsonify({"error": "Model belum tersedia"}), 400
+
+    return jsonify({
+        "jumlah_data": data_count,
+        "intercept": model_data.intercept,
+        "b1": model_data.b1,
+        "b2": model_data.b2,
+        "b3": model_data.b3,
+        "updated_at": model_data.created_at.strftime("%Y-%m-%d %H:%M:%S")
+    })
+
+@app.route("/evaluate", methods=["POST"])
+def evaluate_model():
+    try:
+        if "file" not in request.files:
+            return jsonify({"error": "File testing tidak ditemukan"}), 400
+
+        file = request.files["file"]
+
+        # Ambil model terbaru
+        db = SessionLocal()
+        model_data = db.query(ModelStore).order_by(ModelStore.id.desc()).first()
+
+        if not model_data:
+            db.close()
+            return jsonify({"error": "Model belum tersedia. Latih model terlebih dahulu."}), 400
+
+        # Baca file Excel testing
+        df_test = pd.read_excel(file)
+
+        # Ambil X_test dan y_test
+        X_test = df_test[["pengunjung", "tayangan", "pesanan"]]
+        y_test = df_test["terjual"]
+
+        # Buat model dari koefisien yang tersimpan di DB
+        import numpy as np
+        prediksi = (
+            model_data.intercept
+            + model_data.b1 * X_test["pengunjung"]
+            + model_data.b2 * X_test["tayangan"]
+            + model_data.b3 * X_test["pesanan"]
+        )
+
+        # Hitung evaluasi
+        r2 = r2_score(y_test, prediksi)
+        mae = mean_absolute_error(y_test, prediksi)
+        mse = mean_squared_error(y_test, prediksi)
+
+        # Simpan hasil evaluasi ke DB
+        db.add(ModelEvaluation(r2_score=r2, mae=mae, mse=mse))
+        db.commit()
+        db.close()
+
+        return jsonify({
+            "message": "Evaluasi model berhasil disimpan",
+            "r2_score": round(r2, 4),
+            "mae": round(mae, 4),
+            "mse": round(mse, 4)
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    
+
+@app.route("/evaluation-history", methods=["GET"])
+def evaluation_history():
+    db = SessionLocal()
+    evaluations = db.query(ModelEvaluation).order_by(ModelEvaluation.created_at.desc()).all()
+    db.close()
+
+    return jsonify([
+        {
+            "id": e.id,
+            "r2_score": round(e.r2_score, 4),
+            "mae": round(e.mae, 4),
+            "mse": round(e.mse, 4),
+            "created_at": e.created_at.strftime("%Y-%m-%d %H:%M:%S")
+        }
+        for e in evaluations
+    ])
 
 if __name__ == "__main__":
     app.run(debug=True)
+
+
+
+

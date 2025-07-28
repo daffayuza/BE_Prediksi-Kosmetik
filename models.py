@@ -26,3 +26,12 @@ class ModelStore(Base):
     mae = Column(Float)
     mse = Column(Float)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+class ModelEvaluation(Base):
+    __tablename__ = "model_evaluation"
+
+    id = Column(Integer, primary_key=True, index=True)
+    r2_score = Column(Float)
+    mae = Column(Float)
+    mse = Column(Float)
+    created_at = Column(DateTime, default=datetime.utcnow)
