@@ -2,78 +2,186 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import pandas as pd
 from sklearn.linear_model import LinearRegression
-from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
+from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error, mean_absolute_percentage_error
 from database import SessionLocal
-from models import TrainingData, ModelStore, ModelEvaluation
+from models import TrainingData, ModelStore, ModelEvaluation, TestingData
+from datetime import datetime
+from pytz import timezone
+import numpy as np
 
 app = Flask(__name__)
 CORS(app)
 
+# Untuk handle Train Data
 @app.route("/train", methods=["POST"])
-def train():
+def train_model():
+    """Train model using all training data in DB (replace ModelStore & ModelEvaluation)"""
     if "file" not in request.files:
         return jsonify({"error": "File tidak ditemukan"}), 400
 
     file = request.files["file"]
+    if file.filename == "":
+        return jsonify({"error": "Tidak ada file yang dipilih"}), 400
+
     try:
+        # Validasi file Excel
+        if not file.filename.endswith(('.xlsx', '.xls')):
+            return jsonify({"error": "File harus berformat Excel (.xlsx atau .xls)"}), 400
+
         df = pd.read_excel(file)
 
-        X = df[["pengunjung", "tayangan", "pesanan"]]
-        y = df["terjual"]
+        # Validasi kolom
+        required_columns = ["pengunjung", "tayangan", "pesanan", "terjual"]
+        if not all(col in df.columns for col in required_columns):
+            return jsonify({"error": f"File harus memiliki kolom: {required_columns}"}), 400
 
-        # Simpan data ke DB
+        # Validasi nilai kosong / negatif
+        if df[required_columns].isnull().values.any():
+            return jsonify({"error": "Data tidak boleh mengandung nilai kosong"}), 400
+        if (df[required_columns] < 0).any().any():
+            return jsonify({"error": "Data tidak boleh mengandung nilai negatif"}), 400
+
         db = SessionLocal()
-        for _, row in df.iterrows():
-            db.add(TrainingData(
-                pengunjung=int(row["pengunjung"]),
-                tayangan=int(row["tayangan"]),
-                pesanan=int(row["pesanan"]),
-                terjual=int(row["terjual"])
-            ))
-        db.commit()
+        try:
+            # Simpan data latih baru
+            for _, row in df.iterrows():
+                training_row = TrainingData(
+                    pengunjung=int(row["pengunjung"]),
+                    tayangan=int(row["tayangan"]),
+                    pesanan=int(row["pesanan"]),
+                    terjual=int(row["terjual"]),
+                    created_at=datetime.utcnow()
+                )
+                db.add(training_row)
+            db.commit()
 
-        # Ambil semua data training yang ada di DB
+            # Ambil SEMUA data training dari DB
+            all_training = db.query(TrainingData).all()
+            if not all_training:
+                return jsonify({"error": "Tidak ada data latih di database"}), 400
+
+            df_all = pd.DataFrame([{
+                "pengunjung": t.pengunjung,
+                "tayangan": t.tayangan,
+                "pesanan": t.pesanan,
+                "terjual": t.terjual
+            } for t in all_training])
+
+            # Latih model dengan seluruh data
+            X = df_all[["pengunjung", "tayangan", "pesanan"]]
+            y = df_all["terjual"]
+
+            model = LinearRegression()
+            model.fit(X, y)
+
+            intercept = float(model.intercept_)
+            b1, b2, b3 = map(float, model.coef_)
+
+            # Update ModelStore (bukan insert)
+            latest_model = db.query(ModelStore).order_by(ModelStore.id.desc()).first()
+            if latest_model:
+                latest_model.intercept = intercept
+                latest_model.b1 = b1
+                latest_model.b2 = b2
+                latest_model.b3 = b3
+                latest_model.created_at = datetime.utcnow()
+            else:
+                latest_model = ModelStore(
+                    intercept=intercept,
+                    b1=b1,
+                    b2=b2,
+                    b3=b3,
+                    created_at=datetime.utcnow()
+                )
+                db.add(latest_model)
+                db.commit()
+
+            # Update evaluasi jika ada data testing
+            testing_data = db.query(TestingData).all()
+            if testing_data:
+                df_test = pd.DataFrame([{
+                    "pengunjung": d.pengunjung,
+                    "tayangan": d.tayangan,
+                    "pesanan": d.pesanan,
+                    "terjual": d.terjual
+                } for d in testing_data])
+
+                X_test = df_test[["pengunjung", "tayangan", "pesanan"]]
+                y_test = df_test["terjual"]
+
+                prediksi = (
+                    intercept
+                    + b1 * X_test["pengunjung"]
+                    + b2 * X_test["tayangan"]
+                    + b3 * X_test["pesanan"]
+                ).clip(lower=0)
+
+                r2 = r2_score(y_test, prediksi)
+                mae = mean_absolute_error(y_test, prediksi)
+                mse = mean_squared_error(y_test, prediksi)
+                mape = mean_absolute_percentage_error(y_test, prediksi)
+
+                evaluation = db.query(ModelEvaluation).filter_by(model_id=latest_model.id).first()
+                if evaluation:
+                    evaluation.r2_score = r2
+                    evaluation.mae = mae
+                    evaluation.mse = mse
+                    evaluation.mape = mape
+                    evaluation.created_at = datetime.utcnow()
+                else:
+                    evaluation = ModelEvaluation(
+                        model_id=latest_model.id,
+                        r2_score=r2,
+                        mae=mae,
+                        mse=mse,
+                        mape=mape,
+                        created_at=datetime.utcnow()
+                    )
+                    db.add(evaluation)
+
+            db.commit()
+
+            return jsonify({
+                "message": "Model berhasil dilatih ulang berdasarkan semua data training",
+                "model": {
+                    "intercept": intercept,
+                    "b1": b1,
+                    "b2": b2,
+                    "b3": b3
+                }
+            })
+
+        finally:
+            db.close()
+
+    except Exception as e:
+        return jsonify({"error": f"Gagal melatih model: {str(e)}"}), 500
+
+
+# untuk menampilkan semua data training pada tabel
+@app.route("/training-data", methods=["GET"])
+def get_training_data():
+    try:
+        db = SessionLocal()
         all_data = db.query(TrainingData).all()
-        data_X = [[d.pengunjung, d.tayangan, d.pesanan] for d in all_data]
-        data_y = [d.terjual for d in all_data]
-
-        # Latih model regresi
-        model = LinearRegression()
-        model.fit(data_X, data_y)
-        y_pred = model.predict(data_X)
-
-        r2 = r2_score(data_y, y_pred)
-        mae = mean_absolute_error(data_y, y_pred)
-        mse = mean_squared_error(data_y, y_pred)
-
-        # Simpan model terbaru ke DB (hapus lama)
-        db.query(ModelStore).delete()
-        db.add(ModelStore(
-            intercept=model.intercept_,
-            b1=model.coef_[0],
-            b2=model.coef_[1],
-            b3=model.coef_[2],
-            r2_score=r2,
-            mae=mae,
-            mse=mse
-        ))
-        db.commit()
         db.close()
 
-        return jsonify({
-            "message": "Model berhasil dilatih",
-            "jumlah_data_latih": len(data_y),
-            "r2_score": round(r2, 4),
-            "mae": round(mae, 4),
-            "mse": round(mse, 4),
-            "intercept": round(model.intercept_, 4),
-            "b1": round(model.coef_[0], 4),
-            "b2": round(model.coef_[1], 4),
-            "b3": round(model.coef_[2], 4),
-        })
+        result = [
+            {
+                "id": data.id,
+                "pengunjung": data.pengunjung,
+                "tayangan": data.tayangan,
+                "pesanan": data.pesanan,
+                "terjual": data.terjual
+            }
+            for data in all_data
+        ]
+        return jsonify(result)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+
+# untuk prediksi penjualan
 @app.route("/predict", methods=["POST"])
 def predict():
     try:
@@ -99,6 +207,8 @@ def predict():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     
+
+# untuk menampilkan Koefisien regresi model    
 @app.route("/model-info", methods=["GET"])
 def model_info():
     db = SessionLocal()
@@ -107,6 +217,11 @@ def model_info():
     model_data = db.query(ModelStore).order_by(ModelStore.id.desc()).first()
     if not model_data:
         return jsonify({"error": "Model belum tersedia"}), 400
+    
+     # Konversi waktu UTC ke Asia/Jakarta (WIB)
+    utc_time = model_data.created_at
+    jakarta_tz = timezone("Asia/Jakarta")
+    wib_time = utc_time.astimezone(jakarta_tz)
 
     return jsonify({
         "jumlah_data": data_count,
@@ -114,81 +229,259 @@ def model_info():
         "b1": model_data.b1,
         "b2": model_data.b2,
         "b3": model_data.b3,
-        "updated_at": model_data.created_at.strftime("%Y-%m-%d %H:%M:%S")
+        "updated_at": wib_time.strftime("%d-%m-%Y %H:%M:%S")
     })
+    
 
-@app.route("/evaluate", methods=["POST"])
-def evaluate_model():
+@app.route("/latest-evaluation", methods=["GET"])
+def get_latest_evaluation():
+    """Get latest model evaluation metrics"""
     try:
-        if "file" not in request.files:
-            return jsonify({"error": "File testing tidak ditemukan"}), 400
-
-        file = request.files["file"]
-
-        # Ambil model terbaru
         db = SessionLocal()
-        model_data = db.query(ModelStore).order_by(ModelStore.id.desc()).first()
-
-        if not model_data:
+        try:
+            # Ambil model terbaru
+            model_data = db.query(ModelStore).order_by(ModelStore.created_at.desc()).first()
+            
+            if not model_data:
+                return jsonify({"error": "Model belum tersedia"}), 400
+            
+            # Ambil evaluasi terbaru untuk model ini
+            evaluation = db.query(ModelEvaluation).filter_by(model_id=model_data.id).first()
+            
+            if not evaluation:
+                return jsonify({"error": "Evaluasi belum dilakukan"}), 400
+            
+            # Hitung statistik data testing
+            testing_count = db.query(TestingData).count()
+            
+            return jsonify({
+                "model_id": model_data.id,
+                "evaluasi": {
+                    "r2_score": round(evaluation.r2_score, 4),
+                    "mae": round(evaluation.mae, 4),
+                    "mse": round(evaluation.mse, 4),
+                    "mape": round(evaluation.mape, 4)
+                },
+                "data_info": {
+                    "testing_samples": testing_count,
+                    "evaluation_date": evaluation.created_at.strftime("%Y-%m-%d %H:%M:%S")
+                }
+            })
+            
+        finally:
             db.close()
-            return jsonify({"error": "Model belum tersedia. Latih model terlebih dahulu."}), 400
-
-        # Baca file Excel testing
-        df_test = pd.read_excel(file)
-
-        # Ambil X_test dan y_test
-        X_test = df_test[["pengunjung", "tayangan", "pesanan"]]
-        y_test = df_test["terjual"]
-
-        # Buat model dari koefisien yang tersimpan di DB
-        import numpy as np
-        prediksi = (
-            model_data.intercept
-            + model_data.b1 * X_test["pengunjung"]
-            + model_data.b2 * X_test["tayangan"]
-            + model_data.b3 * X_test["pesanan"]
-        )
-
-        # Hitung evaluasi
-        r2 = r2_score(y_test, prediksi)
-        mae = mean_absolute_error(y_test, prediksi)
-        mse = mean_squared_error(y_test, prediksi)
-
-        # Simpan hasil evaluasi ke DB
-        db.add(ModelEvaluation(r2_score=r2, mae=mae, mse=mse))
-        db.commit()
-        db.close()
-
-        return jsonify({
-            "message": "Evaluasi model berhasil disimpan",
-            "r2_score": round(r2, 4),
-            "mae": round(mae, 4),
-            "mse": round(mse, 4)
-        })
-
+            
     except Exception as e:
+        # logger.error(f"Error getting latest evaluation: {str(e)}")
         return jsonify({"error": str(e)}), 500
     
 
-@app.route("/evaluation-history", methods=["GET"])
-def evaluation_history():
-    db = SessionLocal()
-    evaluations = db.query(ModelEvaluation).order_by(ModelEvaluation.created_at.desc()).all()
-    db.close()
+# untuk logic evaluasi model
+@app.route("/evaluate", methods=["POST"])
+def evaluate():
+    """Evaluate model with testing data and save results"""
+    if "file" not in request.files:
+        return jsonify({"error": "File tidak ditemukan"}), 400
 
-    return jsonify([
-        {
-            "id": e.id,
-            "r2_score": round(e.r2_score, 4),
-            "mae": round(e.mae, 4),
-            "mse": round(e.mse, 4),
-            "created_at": e.created_at.strftime("%Y-%m-%d %H:%M:%S")
-        }
-        for e in evaluations
-    ])
+    file = request.files["file"]
+    if file.filename == '':
+        return jsonify({"error": "Tidak ada file yang dipilih"}), 400
+
+    try:
+        # Validasi file Excel
+        if not file.filename.endswith(('.xlsx', '.xls')):
+            return jsonify({"error": "File harus berformat Excel (.xlsx atau .xls)"}), 400
+
+        df = pd.read_excel(file)
+
+        # Validasi kolom
+        required_columns = ["pengunjung", "tayangan", "pesanan", "terjual"]
+        if not all(col in df.columns for col in required_columns):
+            return jsonify({"error": f"File harus memiliki kolom: {required_columns}"}), 400
+
+        # Validasi nilai negatif
+        if (df[required_columns] < 0).any().any():
+            return jsonify({"error": "Data tidak boleh mengandung nilai negatif"}), 400
+
+        # Validasi tidak kosong
+        if len(df) == 0:
+            return jsonify({"error": "File tidak boleh kosong"}), 400
+
+        X = df[["pengunjung", "tayangan", "pesanan"]]
+        y = df["terjual"]
+
+        # =========================
+        # 1. Latih ulang model
+        # =========================
+        from sklearn.linear_model import LinearRegression
+        model = LinearRegression()
+        model.fit(X, y)
+
+        # Simpan koefisien
+        intercept = float(model.intercept_)
+        b1, b2, b3 = model.coef_
+
+        # =========================
+        # 2. Prediksi
+        # =========================
+        y_pred = model.predict(X)  # full precision
+        y_pred_clipped = np.clip(y_pred, 0, None)  # ubah negatif jadi 0
+
+        # =========================
+        # 3. Hitung metrik evaluasi
+        # =========================
+        r2 = r2_score(y, y_pred_clipped)
+        mae = mean_absolute_error(y, y_pred_clipped)
+        mse = mean_squared_error(y, y_pred_clipped)
+        mape = mean_absolute_percentage_error(y, y_pred_clipped)
+
+        db = SessionLocal()
+        try:
+            # =========================
+            # 4. Update ModelStore
+            # =========================
+            model_data = db.query(ModelStore).order_by(ModelStore.id.desc()).first()
+            if model_data:
+                # Update model lama
+                model_data.intercept = intercept
+                model_data.b1 = float(b1)
+                model_data.b2 = float(b2)
+                model_data.b3 = float(b3)
+                model_data.created_at = datetime.utcnow()
+            else:
+                # Simpan model baru
+                model_data = ModelStore(
+                    intercept=intercept,
+                    b1=float(b1),
+                    b2=float(b2),
+                    b3=float(b3)
+                )
+                db.add(model_data)
+                db.flush()  # supaya dapat model_data.id
+
+            # =========================
+            # 5. Hapus & simpan TestingData baru
+            # =========================
+            db.query(TestingData).delete()
+            for i, row in df.iterrows():
+                db.add(TestingData(
+                    pengunjung=int(row["pengunjung"]),
+                    tayangan=int(row["tayangan"]),
+                    pesanan=int(row["pesanan"]),
+                    terjual=int(row["terjual"]),
+                    predicted=round(float(y_pred_clipped[i]), 2)
+                ))
+
+            # =========================
+            # 6. Update ModelEvaluation
+            # =========================
+            existing_eval = db.query(ModelEvaluation).filter_by(model_id=model_data.id).first()
+            if existing_eval:
+                existing_eval.r2_score = float(r2)
+                existing_eval.mae = float(mae)
+                existing_eval.mse = float(mse)
+                existing_eval.mape = float(mape)
+                existing_eval.created_at = datetime.utcnow()
+            else:
+                evaluation = ModelEvaluation(
+                    model_id=model_data.id,
+                    r2_score=float(r2),
+                    mae=float(mae),
+                    mse=float(mse),
+                    mape=float(mape)
+                )
+                db.add(evaluation)
+
+            db.commit()
+
+            return jsonify({
+                "message": "Evaluasi berhasil (model dilatih ulang dari data testing)",
+                "jumlah_data_test": len(df),
+                "evaluasi": {
+                    "r2_score": round(r2, 4),
+                    "mae": round(mae, 4),
+                    "mse": round(mse, 4),
+                    "mape": round(mape, 4)
+                },
+                "summary": {
+                    "best_prediction": float(y_pred_clipped.max()),
+                    "worst_prediction": float(y_pred_clipped.min()),
+                    "avg_prediction": float(y_pred_clipped.mean()),
+                    "total_actual": int(y.sum()),
+                    "total_predicted": int(y_pred_clipped.sum())
+                }
+            })
+
+        finally:
+            db.close()
+
+    except pd.errors.EmptyDataError:
+        return jsonify({"error": "File Excel kosong atau tidak valid"}), 400
+    except pd.errors.ParserError:
+        return jsonify({"error": "Format file Excel tidak valid"}), 400
+    except Exception as e:
+        return jsonify({"error": f"Error dalam evaluasi: {str(e)}"}), 500
+
+
+
+@app.route("/testing-data", methods=["GET"])
+def get_testing_data():
+    """Get all testing data with predictions"""
+    try:
+        db = SessionLocal()
+        try:
+            # Ambil data testing yang sudah ada prediksinya
+            all_data = db.query(TestingData).order_by(TestingData.created_at.desc()).all()
+
+            if not all_data:
+                return jsonify([])
+
+            result = []
+            for data in all_data:
+                # Hitung error jika ada prediksi
+                error = None
+                if data.predicted is not None:
+                    error = abs(data.terjual - data.predicted)
+                
+                result.append({
+                    "id": data.id,
+                    "pengunjung": data.pengunjung,
+                    "tayangan": data.tayangan,
+                    "pesanan": data.pesanan,
+                    "terjual": data.terjual,
+                    "prediksi": data.predicted,
+                    "error": round(error, 2) if error is not None else None,
+                    "created_at": data.created_at.strftime("%Y-%m-%d %H:%M:%S")
+                })
+                
+            return jsonify(result)
+            
+        finally:
+            db.close()
+            
+    except Exception as e:
+        # logger.error(f"Error getting testing data: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+    
+@app.route("/train/delete-all", methods=["DELETE"])
+def delete_all_training_data():
+    try:
+        db = SessionLocal()
+
+        # Hapus semua data dari tabel training
+        deleted_rows = db.query(TrainingData).delete()
+        db.commit()
+
+        db.close()
+        return jsonify({"message": f"{deleted_rows} data latih berhasil dihapus."})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
     app.run(debug=True)
+
+
+
 
 
 
