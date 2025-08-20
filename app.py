@@ -279,7 +279,7 @@ def get_latest_evaluation():
 # untuk logic evaluasi model
 @app.route("/evaluate", methods=["POST"])
 def evaluate():
-    """Evaluate model with testing data and save results"""
+    """Evaluate model with testing data (tanpa update ModelStore)"""
     if "file" not in request.files:
         return jsonify({"error": "File tidak ditemukan"}), 400
 
@@ -310,57 +310,36 @@ def evaluate():
         X = df[["pengunjung", "tayangan", "pesanan"]]
         y = df["terjual"]
 
-        # =========================
-        # 1. Latih ulang model
-        # =========================
-        from sklearn.linear_model import LinearRegression
-        model = LinearRegression()
-        model.fit(X, y)
-
-        # Simpan koefisien
-        intercept = float(model.intercept_)
-        b1, b2, b3 = model.coef_
-
-        # =========================
-        # 2. Prediksi
-        # =========================
-        y_pred = model.predict(X)  # full precision
-        y_pred_clipped = np.clip(y_pred, 0, None)  # ubah negatif jadi 0
-
-        # =========================
-        # 3. Hitung metrik evaluasi
-        # =========================
-        r2 = r2_score(y, y_pred_clipped)
-        mae = mean_absolute_error(y, y_pred_clipped)
-        mse = mean_squared_error(y, y_pred_clipped)
-        mape = mean_absolute_percentage_error(y, y_pred_clipped)
-
         db = SessionLocal()
         try:
             # =========================
-            # 4. Update ModelStore
+            # 1. Ambil model terakhir dari ModelStore
             # =========================
             model_data = db.query(ModelStore).order_by(ModelStore.id.desc()).first()
-            if model_data:
-                # Update model lama
-                model_data.intercept = intercept
-                model_data.b1 = float(b1)
-                model_data.b2 = float(b2)
-                model_data.b3 = float(b3)
-                model_data.created_at = datetime.utcnow()
-            else:
-                # Simpan model baru
-                model_data = ModelStore(
-                    intercept=intercept,
-                    b1=float(b1),
-                    b2=float(b2),
-                    b3=float(b3)
-                )
-                db.add(model_data)
-                db.flush()  # supaya dapat model_data.id
+            if not model_data:
+                return jsonify({"error": "Belum ada model yang dilatih dari data training"}), 400
+
+            # Buat ulang model LinearRegression dari parameter yang tersimpan
+            model = LinearRegression()
+            model.intercept_ = model_data.intercept
+            model.coef_ = np.array([model_data.b1, model_data.b2, model_data.b3])
 
             # =========================
-            # 5. Hapus & simpan TestingData baru
+            # 2. Prediksi data testing
+            # =========================
+            y_pred = model.predict(X)
+            y_pred_clipped = np.clip(y_pred, 0, None)
+
+            # =========================
+            # 3. Hitung metrik evaluasi
+            # =========================
+            r2 = r2_score(y, y_pred_clipped)
+            mae = mean_absolute_error(y, y_pred_clipped)
+            mse = mean_squared_error(y, y_pred_clipped)
+            mape = mean_absolute_percentage_error(y, y_pred_clipped)
+
+            # =========================
+            # 4. Hapus & simpan TestingData baru
             # =========================
             db.query(TestingData).delete()
             for i, row in df.iterrows():
@@ -373,7 +352,7 @@ def evaluate():
                 ))
 
             # =========================
-            # 6. Update ModelEvaluation
+            # 5. Update / Simpan Evaluasi Model
             # =========================
             existing_eval = db.query(ModelEvaluation).filter_by(model_id=model_data.id).first()
             if existing_eval:
@@ -395,7 +374,7 @@ def evaluate():
             db.commit()
 
             return jsonify({
-                "message": "Evaluasi berhasil (model dilatih ulang dari data testing)",
+                "message": "Evaluasi berhasil (model tidak diubah, hanya dievaluasi)",
                 "jumlah_data_test": len(df),
                 "evaluasi": {
                     "r2_score": round(r2, 4),
@@ -421,6 +400,7 @@ def evaluate():
         return jsonify({"error": "Format file Excel tidak valid"}), 400
     except Exception as e:
         return jsonify({"error": f"Error dalam evaluasi: {str(e)}"}), 500
+
 
 
 
