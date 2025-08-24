@@ -1,19 +1,56 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, session
 from flask_cors import CORS
 import pandas as pd
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error, mean_absolute_percentage_error
 from database import SessionLocal
-from models import TrainingData, ModelStore, ModelEvaluation, TestingData
+from models import TrainingData, ModelStore, ModelEvaluation, TestingData, User
 from datetime import datetime
 from pytz import timezone
 import numpy as np
+from functools import wraps
+from werkzeug.security import check_password_hash
 
 app = Flask(__name__)
-CORS(app)
+
+# Secret key wajib untuk session
+app.secret_key = "supersecretkey"
+
+# Aktifkan CORS + credentials
+CORS(app, supports_credentials=True, origins=["http://localhost:3000"])
+
+@app.route("/login", methods=["POST"])
+def login():
+    data = request.get_json()
+    username = data.get("username")
+    password = data.get("password")
+
+    db = SessionLocal()
+    user = db.query(User).filter(User.username == username).first()
+    db.close()
+
+    if user and check_password_hash(user.password_hash, password):
+        session["user_id"] = user.id
+        return jsonify({"message": "Login berhasil", "username": user.username}), 200
+    else:
+        return jsonify({"error": "Username atau password salah"}), 401
+
+@app.route("/logout", methods=["POST"])
+def logout():
+    session.clear()  # hapus session user
+    return jsonify({"message": "Logout berhasil"}), 200
+
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if "user_id" not in session:
+            return jsonify({"error": "Unauthorized"}), 401
+        return f(*args, **kwargs)
+    return decorated_function
 
 # Untuk handle Train Data
 @app.route("/train", methods=["POST"])
+@login_required
 def train_model():
     """Train model using all training data in DB (replace ModelStore & ModelEvaluation)"""
     if "file" not in request.files:
@@ -77,7 +114,7 @@ def train_model():
             intercept = float(model.intercept_)
             b1, b2, b3 = map(float, model.coef_)
 
-            # Update ModelStore (bukan insert)
+            # Update ModelStore
             latest_model = db.query(ModelStore).order_by(ModelStore.id.desc()).first()
             if latest_model:
                 latest_model.intercept = intercept
@@ -402,8 +439,6 @@ def evaluate():
         return jsonify({"error": f"Error dalam evaluasi: {str(e)}"}), 500
 
 
-
-
 @app.route("/testing-data", methods=["GET"])
 def get_testing_data():
     """Get all testing data with predictions"""
@@ -458,11 +493,4 @@ def delete_all_training_data():
         return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
-    app.run(debug=True)
-
-
-
-
-
-
-
+    app.run(host="0.0.0.0", port=5000, debug=True)
