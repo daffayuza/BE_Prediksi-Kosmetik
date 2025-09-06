@@ -2,7 +2,7 @@ from flask import Flask, request, jsonify, session
 from flask_cors import CORS
 import pandas as pd
 from sklearn.linear_model import LinearRegression
-from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error, mean_absolute_percentage_error
+from sklearn.metrics import r2_score, mean_absolute_error, mean_absolute_percentage_error
 from database import SessionLocal
 from models import TrainingData, ModelStore, ModelEvaluation, TestingData, User
 from datetime import datetime
@@ -155,14 +155,12 @@ def train_model():
 
                 r2 = r2_score(y_test, prediksi)
                 mae = mean_absolute_error(y_test, prediksi)
-                mse = mean_squared_error(y_test, prediksi)
                 mape = mean_absolute_percentage_error(y_test, prediksi)
 
                 evaluation = db.query(ModelEvaluation).filter_by(model_id=latest_model.id).first()
                 if evaluation:
                     evaluation.r2_score = r2
                     evaluation.mae = mae
-                    evaluation.mse = mse
                     evaluation.mape = mape
                     evaluation.created_at = datetime.utcnow()
                 else:
@@ -170,7 +168,6 @@ def train_model():
                         model_id=latest_model.id,
                         r2_score=r2,
                         mae=mae,
-                        mse=mse,
                         mape=mape,
                         created_at=datetime.utcnow()
                     )
@@ -296,7 +293,6 @@ def get_latest_evaluation():
                 "evaluasi": {
                     "r2_score": round(evaluation.r2_score, 4),
                     "mae": round(evaluation.mae, 4),
-                    "mse": round(evaluation.mse, 4),
                     "mape": round(evaluation.mape, 4)
                 },
                 "data_info": {
@@ -372,7 +368,6 @@ def evaluate():
             # =========================
             r2 = r2_score(y, y_pred_clipped)
             mae = mean_absolute_error(y, y_pred_clipped)
-            mse = mean_squared_error(y, y_pred_clipped)
             mape = mean_absolute_percentage_error(y, y_pred_clipped)
 
             # =========================
@@ -395,7 +390,6 @@ def evaluate():
             if existing_eval:
                 existing_eval.r2_score = float(r2)
                 existing_eval.mae = float(mae)
-                existing_eval.mse = float(mse)
                 existing_eval.mape = float(mape)
                 existing_eval.created_at = datetime.utcnow()
             else:
@@ -403,7 +397,6 @@ def evaluate():
                     model_id=model_data.id,
                     r2_score=float(r2),
                     mae=float(mae),
-                    mse=float(mse),
                     mape=float(mape)
                 )
                 db.add(evaluation)
@@ -416,7 +409,6 @@ def evaluate():
                 "evaluasi": {
                     "r2_score": round(r2, 4),
                     "mae": round(mae, 4),
-                    "mse": round(mse, 4),
                     "mape": round(mape, 4)
                 },
                 "summary": {

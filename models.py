@@ -37,7 +37,6 @@ class ModelEvaluation(Base):
     model_id = Column(Integer, ForeignKey("model_store.id"))
     r2_score = Column(Float)
     mae = Column(Float)
-    mse = Column(Float)
     mape = Column(Float)
     created_at = Column(DateTime, default=datetime.utcnow)
 
