@@ -9,7 +9,7 @@ from datetime import datetime
 from pytz import timezone
 import numpy as np
 from functools import wraps
-from werkzeug.security import check_password_hash
+from werkzeug.security import check_password_hash, generate_password_hash
 
 app = Flask(__name__)
 
@@ -18,6 +18,31 @@ app.secret_key = "supersecretkey"
 
 # Aktifkan CORS + credentials
 CORS(app, supports_credentials=True, origins=["http://localhost:3000"])
+
+@app.route("/register", methods=["POST"])
+def register():
+    db = SessionLocal()
+    data = request.get_json()
+
+    username = data.get("username")
+    password = data.get("password")
+
+    if not username or not password:
+        return jsonify({"error": "Username dan password wajib diisi"}), 400
+
+    # cek user sudah ada
+    existing = db.query(User).filter(User.username == username).first()
+    if existing:
+        return jsonify({"error": "Username sudah terdaftar"}), 400
+
+    # hash password
+    hashed_password = generate_password_hash(password)  
+
+    new_user = User(username=username, password_hash=hashed_password)
+    db.add(new_user)
+    db.commit()
+
+    return jsonify({"message": "Registrasi berhasil, silakan login"})
 
 @app.route("/login", methods=["POST"])
 def login():
@@ -467,7 +492,6 @@ def get_testing_data():
             db.close()
             
     except Exception as e:
-        # logger.error(f"Error getting testing data: {str(e)}")
         return jsonify({"error": str(e)}), 500
     
 @app.route("/train/delete-all", methods=["DELETE"])
