@@ -95,7 +95,7 @@ def train_model():
         # Validasi kolom
         required_columns = ["pengunjung", "tayangan", "pesanan", "terjual"]
         if not all(col in df.columns for col in required_columns):
-            return jsonify({"error": f"File harus memiliki kolom: {required_columns}"}), 400
+            return jsonify({"error": f"File harus memiliki kolom : pengunjung, tayangan, pesanan, dan terjual"}), 400
 
         # Validasi nilai kosong / negatif
         if df[required_columns].isnull().values.any():
@@ -355,7 +355,8 @@ def evaluate():
         # Validasi kolom
         required_columns = ["pengunjung", "tayangan", "pesanan", "terjual"]
         if not all(col in df.columns for col in required_columns):
-            return jsonify({"error": f"File harus memiliki kolom: {required_columns}"}), 400
+            return jsonify({"error": f"File harus memiliki kolom : pengunjung, tayangan, pesanan, dan terjual"}), 400
+
 
         # Validasi nilai negatif
         if (df[required_columns] < 0).any().any():
