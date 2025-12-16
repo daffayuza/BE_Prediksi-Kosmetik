@@ -12,15 +12,14 @@ class Product(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(pytz.UTC))
 
     # Relasi
-    training_data = relationship("TrainingData", back_populates="product")
-    testing_data = relationship("TestingData", back_populates="product")
-    model_store = relationship("ModelStore", back_populates="product")
-    prediction_history = relationship("PredictionHistory", back_populates="product")
+    training_data = relationship("TrainingData", cascade="all, delete-orphan", back_populates="product")
+    testing_data = relationship("TestingData", cascade="all, delete-orphan", back_populates="product")
+    model_store = relationship("ModelStore", cascade="all, delete-orphan", back_populates="product")
 
 class TrainingData(Base):
     __tablename__ = "training_data"
     id = Column(Integer, primary_key=True, index=True)
-    product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
+    product_id = Column(Integer, ForeignKey("products.id", ondelete="CASCADE"), nullable=False)
     pengunjung = Column(Integer)
     tayangan = Column(Integer)
     pesanan = Column(Integer)
@@ -33,7 +32,7 @@ class TrainingData(Base):
 class TestingData(Base):
     __tablename__ = "testing_data"
     id = Column(Integer, primary_key=True, index=True)
-    product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
+    product_id = Column(Integer, ForeignKey("products.id", ondelete="CASCADE"), nullable=False)
     pengunjung = Column(Integer)
     tayangan = Column(Integer)
     pesanan = Column(Integer)
@@ -46,6 +45,7 @@ class TestingData(Base):
 class ModelStore(Base):
     __tablename__ = "model_store"
     id = Column(Integer, primary_key=True, index=True)
+    product_id = Column(Integer, ForeignKey("products.id", ondelete="CASCADE"), nullable=False)
     intercept = Column(Float)
     b1 = Column(Float)
     b2 = Column(Float)
