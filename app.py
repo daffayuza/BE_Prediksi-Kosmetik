@@ -98,13 +98,19 @@ def train_model(product_id):
         return jsonify({"error": f"File tidak dapat dibaca. Pastikan file adalah Excel yang valid: {str(e)}"}), 400
 
     # Validasi kolom
-    required_columns = ["pengunjung", "tayangan", "pesanan", "terjual"]
+    required_columns = ["tahun", "bulan","pengunjung", "tayangan", "pesanan", "terjual"]
     if not all(col in df.columns for col in required_columns):
-        return jsonify({"error": f"File harus memiliki kolom: pengunjung, tayangan, pesanan, terjual"}), 400
+        return jsonify({"error": f"File harus memiliki kolom: tahun, bulan, pengunjung, tayangan, pesanan, terjual"}), 400
 
     # Validasi nilai
     if (df[required_columns] < 0).any().any():
         return jsonify({"error": "Data tidak boleh mengandung nilai negatif"}), 400
+    
+    if df[required_columns].isnull().any().any():
+        return jsonify({"error": "Data tidak boleh mengandung nilai kosong"}), 400
+    
+    if not df["bulan"].between(1, 12).all():
+        return jsonify({"error": "Nilai bulan harus antara 1 sampai 12"}), 400
 
     if len(df) == 0:
         return jsonify({"error": "File tidak boleh kosong"}), 400
@@ -126,6 +132,8 @@ def train_model(product_id):
         for _, row in df.iterrows():
             db.add(TrainingData(
                 product_id=product_id,
+                tahun=int(row["tahun"]),
+                bulan=int(row["bulan"]),
                 pengunjung=int(row["pengunjung"]),
                 tayangan=int(row["tayangan"]),
                 pesanan=int(row["pesanan"]),
@@ -276,6 +284,8 @@ def get_training_data():
                 "id": data.id,
                 "product_id": data.product_id,
                 "product_name": product.name,
+                "tahun": data.tahun,
+                "bulan": data.bulan,
                 "pengunjung": data.pengunjung,
                 "tayangan": data.tayangan,
                 "pesanan": data.pesanan,
@@ -477,13 +487,19 @@ def evaluate():
         df = pd.read_excel(file)
 
         # Validasi kolom
-        required_columns = ["pengunjung", "tayangan", "pesanan", "terjual"]
+        required_columns = ["tahun", "bulan", "pengunjung", "tayangan", "pesanan", "terjual"]
         if not all(col in df.columns for col in required_columns):
-            return jsonify({"error": f"File harus memiliki kolom: pengunjung, tayangan, pesanan, terjual"}), 400
+            return jsonify({"error": f"File harus memiliki kolom: tahun, bulan, pengunjung, tayangan, pesanan, terjual"}), 400
 
         # Validasi nilai
         if (df[required_columns] < 0).any().any():
             return jsonify({"error": "Data tidak boleh mengandung nilai negatif"}), 400
+        
+        if df[required_columns].isnull().any().any():
+            return jsonify({"error": "Data tidak boleh mengandung nilai kosong"}), 400
+        
+        if not df["bulan"].between(1, 12).all():
+            return jsonify({"error": "Nilai bulan harus antara 1 sampai 12"}), 400
 
         if len(df) == 0:
             return jsonify({"error": "File tidak boleh kosong"}), 400
@@ -528,6 +544,8 @@ def evaluate():
             for i, row in df.iterrows():
                 db.add(TestingData(
                     product_id=product_id,
+                    tahun=int(row["tahun"]),
+                    bulan=int(row["bulan"]),
                     pengunjung=int(row["pengunjung"]),
                     tayangan=int(row["tayangan"]),
                     pesanan=int(row["pesanan"]),
@@ -612,6 +630,8 @@ def get_testing_data_by_product(product_id):
                 result.append({
                     "id": data.id,
                     "product_id": data.product_id,
+                    "tahun": data.tahun,
+                    "bulan": data.bulan,
                     "pengunjung": data.pengunjung,
                     "tayangan": data.tayangan,
                     "pesanan": data.pesanan,

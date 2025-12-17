@@ -20,6 +20,8 @@ class TrainingData(Base):
     __tablename__ = "training_data"
     id = Column(Integer, primary_key=True, index=True)
     product_id = Column(Integer, ForeignKey("products.id", ondelete="CASCADE"), nullable=False)
+    tahun = Column(Integer, nullable=False)
+    bulan = Column(Integer, nullable=False)
     pengunjung = Column(Integer)
     tayangan = Column(Integer)
     pesanan = Column(Integer)
@@ -33,6 +35,8 @@ class TestingData(Base):
     __tablename__ = "testing_data"
     id = Column(Integer, primary_key=True, index=True)
     product_id = Column(Integer, ForeignKey("products.id", ondelete="CASCADE"), nullable=False)
+    tahun = Column(Integer)
+    bulan = Column(Integer)
     pengunjung = Column(Integer)
     tayangan = Column(Integer)
     pesanan = Column(Integer)
