@@ -4,7 +4,7 @@ import pandas as pd
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score, mean_absolute_error, mean_absolute_percentage_error
 from database import SessionLocal
-from models import TrainingData, ModelStore, ModelEvaluation, TestingData, User, Product
+from models import TrainingData, ModelStore, ModelEvaluation, TestingData, User, Product, PredictionResult
 from datetime import datetime
 from pytz import timezone
 import numpy as np
@@ -75,7 +75,6 @@ def login_required(f):
 
 # Untuk handle Train Data
 @app.route("/train/<int:product_id>", methods=["POST"])
-@login_required
 def train_model(product_id):
     """Train model untuk produk tertentu, simpan model ke database, update evaluasi jika ada data testing."""
     
@@ -305,35 +304,35 @@ def get_training_data():
 @app.route("/predict", methods=["POST"])
 def predict():
     try:
-        # Ambil input dari FormData
         product_id = request.form.get("product_id", type=int)
+        tahun = request.form.get("tahun", type=int)
+        bulan = request.form.get("bulan", type=int)
+
         pengunjung = request.form.get("pengunjung", type=float)
         tayangan = request.form.get("tayangan", type=float)
         pesanan = request.form.get("pesanan", type=float)
 
-        # Validasi
-        if not product_id:
-            return jsonify({"error": "product_id wajib disertakan"}), 400
+        # ---------------- VALIDASI ----------------
+        if not all([product_id, tahun, bulan]):
+            return jsonify({"error": "product_id, tahun, dan bulan wajib diisi"}), 400
 
-        if pengunjung is None or tayangan is None or pesanan is None:
-            return jsonify({"error": "Semua input (pengunjung, tayangan, pesanan) wajib diisi"}), 400
+        if bulan < 1 or bulan > 12:
+            return jsonify({"error": "Bulan harus antara 1 sampai 12"}), 400
 
+        # ---------------- AMBIL MODEL ----------------
         db = SessionLocal()
 
-        # Ambil model regresi paling terbaru untuk produk tersebut
         model_data = (
             db.query(ModelStore)
-            .filter(ModelStore.product_id == product_id)
-            .order_by(ModelStore.id.desc())
+            .filter_by(product_id=product_id)
+            .order_by(ModelStore.created_at.desc())
             .first()
         )
 
-        db.close()
-
         if not model_data:
-            return jsonify({"error": "Belum ada model untuk produk ini"}), 400
+            return jsonify({"error": "Model belum tersedia untuk produk ini"}), 400
 
-        # Hitung prediksi
+        # ---------------- HITUNG PREDIKSI ----------------
         prediksi = (
             model_data.intercept
             + model_data.b1 * pengunjung
@@ -341,17 +340,102 @@ def predict():
             + model_data.b3 * pesanan
         )
 
-        # Clip biar tidak minus
-        prediksi = max(prediksi, 0)
+        prediksi = round(prediksi)
+
+        # ---------------- SIMPAN KE DATABASE ----------------
+        existing = (
+            db.query(PredictionResult)
+            .filter_by(product_id=product_id, tahun=tahun, bulan=bulan)
+            .first()
+        )
+
+        if existing:
+            # Update jika sudah ada
+            existing.pengunjung = int(pengunjung)
+            existing.tayangan = int(tayangan)
+            existing.pesanan = int(pesanan)
+            existing.predicted_terjual = prediksi
+            existing.created_at = datetime.utcnow()
+        else:
+            db.add(PredictionResult(
+                product_id=product_id,
+                tahun=tahun,
+                bulan=bulan,
+                pengunjung=int(pengunjung),
+                tayangan=int(tayangan),
+                pesanan=int(pesanan),
+                predicted_terjual=prediksi
+            ))
+
+        db.commit()
 
         return jsonify({
-            "product_id": product_id,
-            "prediksi_terjual": round(prediksi)
+            "message": "Prediksi berhasil",
+            "data": {
+                "product_id": product_id,
+                "tahun": tahun,
+                "bulan": bulan,
+                "predicted_terjual": prediksi
+            }
         })
 
     except Exception as e:
+        db.rollback()
         return jsonify({"error": str(e)}), 500
-    
+    finally:
+        db.close()
+
+@app.route("/predictions/<int:product_id>", methods=["GET"])
+def get_predictions(product_id):
+    db = SessionLocal()
+    try:
+        data = (
+            db.query(PredictionResult)
+            .filter_by(product_id=product_id)
+            .order_by(PredictionResult.tahun, PredictionResult.bulan)
+            .all()
+        )
+
+        return jsonify([
+            {
+                "id": d.id,
+                "tahun": d.tahun,
+                "bulan": d.bulan,
+                "pengunjung": d.pengunjung,
+                "tayangan": d.tayangan,
+                "pesanan": d.pesanan,
+                "predicted_terjual": round(d.predicted_terjual, 2),
+                "created_at": d.created_at.isoformat()
+            }
+            for d in data
+        ])
+    finally:
+        db.close()
+
+@app.route("/predictions/<int:product_id>", methods=["DELETE"])
+def delete_all_predictions(product_id):
+    db = SessionLocal()
+    try:
+        deleted = (
+            db.query(PredictionResult)
+            .filter(PredictionResult.product_id == product_id)
+            .delete()
+        )
+        db.commit()
+
+        return jsonify({
+            "message": "Semua riwayat prediksi berhasil dihapus",
+            "product_id": product_id,
+            "deleted_count": deleted
+        })
+    except Exception as e:
+        db.rollback()
+        return jsonify({
+            "error": f"Gagal menghapus riwayat prediksi: {str(e)}"
+        }), 500
+    finally:
+        db.close()
+
 
 # untuk menampilkan Koefisien regresi model    
 @app.route("/model-info", methods=["GET"])

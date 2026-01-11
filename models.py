@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, Float, ForeignKey, DateTime, String
+from sqlalchemy import Column, Integer, Float, ForeignKey, DateTime, String, UniqueConstraint
 from sqlalchemy.orm import relationship
 from database import Base
 from datetime import datetime
@@ -76,3 +76,23 @@ class User(Base):
     username = Column(String(50), unique=True, nullable=False)
     password_hash = Column(String(255), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+class PredictionResult(Base):
+    __tablename__ = "prediction_results"
+
+    id = Column(Integer, primary_key=True)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
+
+    tahun = Column(Integer, nullable=False)
+    bulan = Column(Integer, nullable=False)
+
+    pengunjung = Column(Integer, nullable=False)
+    tayangan = Column(Integer, nullable=False)
+    pesanan = Column(Integer, nullable=False)
+
+    predicted_terjual = Column(Float, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("product_id", "tahun", "bulan", name="uq_prediction_product_time"),
+    )
