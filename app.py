@@ -875,6 +875,35 @@ def delete_product(product_id):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     
+@app.route("/training-data/last/<int:product_id>", methods=["GET"])
+def get_last_training_data(product_id):
+    db = SessionLocal()
+    try:
+        data = (
+            db.query(TrainingData)
+            .filter(TrainingData.product_id == product_id)
+            .order_by(
+                TrainingData.tahun.desc(),
+                TrainingData.bulan.desc()
+            )
+            .first()
+        )
+
+        if not data:
+            return jsonify({
+                "error": "Data historis belum tersedia"
+            }), 404
+
+        return jsonify({
+            "data": {
+                "pengunjung": data.pengunjung,
+                "tayangan": data.tayangan,
+                "pesanan": data.pesanan
+            }
+        })
+    finally:
+        db.close()
+
 
 if __name__ == "__main__":
     app.run(port=5000, debug=True)
