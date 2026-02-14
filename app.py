@@ -8,6 +8,7 @@ from models import TrainingData, ModelStore, ModelEvaluation, TestingData, User,
 from datetime import datetime
 from pytz import timezone
 import numpy as np
+from sqlalchemy import or_
 from functools import wraps
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -761,20 +762,30 @@ def create_product():
     try:
         data = request.json
         name = data.get("name")
+        kode = data.get("kode")
 
         if not name:
             return jsonify({"error": "Nama produk wajib diisi"}), 400
+        
+        if not kode:
+            return jsonify({"error": "Kode produk wajib diisi"}), 400
 
         db = SessionLocal()
 
         # Cek duplikasi
-        existing = db.query(Product).filter(Product.name == name).first()
-        if existing:
+        existing_name = db.query(Product).filter(Product.name == name).first()
+        if existing_name:
             db.close()
             return jsonify({"error": "Produk dengan nama ini sudah ada"}), 400
 
+        existing_kode = db.query(Product).filter(Product.kode == kode).first()
+        if existing_kode:
+            db.close()
+            return jsonify({"error": "Produk dengan kode ini sudah ada"}), 400
+
         new_product = Product(
             name=name,
+            kode=kode
         )
 
         db.add(new_product)
@@ -783,6 +794,7 @@ def create_product():
         result = {
             "id": new_product.id,
             "name": new_product.name,
+            "kode": new_product.kode,
             "created_at": new_product.created_at.strftime("%Y-%m-%d %H:%M:%S")
         }
 
@@ -798,13 +810,14 @@ def create_product():
 def get_products():
     try:
         db = SessionLocal()
-        products = db.query(Product).order_by(Product.created_at.desc()).all()
+        products = db.query(Product).order_by(Product.created_at.asc()).all()
         db.close()
 
         result = [
             {
                 "id": p.id,
                 "name": p.name,
+                "kode": p.kode,
                 "created_at": p.created_at.strftime("%Y-%m-%d %H:%M:%S")
             }
             for p in products
@@ -829,6 +842,9 @@ def update_product(product_id):
         data = request.get_json()
         if not data or "name" not in data:
             return jsonify({"error": "Field 'name' wajib diisi"}), 400
+        
+        if not data or "kode" not in data:
+            return jsonify({"error": "Field 'kode' wajib diisi"}), 400
 
         db = SessionLocal()
         try:
@@ -837,15 +853,35 @@ def update_product(product_id):
             if not product:
                 return jsonify({"error": "Produk tidak ditemukan"}), 404
 
-            # Update nama produk
+            # Validasi duplikasi nama produk (kecuali produk yang sedang diupdate)
+            existing_name = db.query(Product).filter(
+                Product.name == data["name"],
+                Product.id != product_id
+            ).first()
+            
+            if existing_name:
+                return jsonify({"error": "Produk dengan nama ini sudah ada"}), 400
+
+            # Validasi duplikasi kode produk (kecuali produk yang sedang diupdate)
+            existing_kode = db.query(Product).filter(
+                Product.kode == data["kode"],
+                Product.id != product_id
+            ).first()
+            
+            if existing_kode:
+                return jsonify({"error": "Produk dengan kode ini sudah ada"}), 400
+
+            # Update nama dan kode produk
             product.name = data["name"]
+            product.kode = data["kode"]
             db.commit()
 
             return jsonify({
                 "message": "Produk berhasil diperbarui",
                 "product": {
                     "id": product.id,
-                    "name": product.name
+                    "name": product.name,
+                    "kode": product.kode
                 }
             }), 200
 

@@ -8,6 +8,7 @@ class Product(Base):
     __tablename__ = "products"
 
     id = Column(Integer, primary_key=True, index=True)
+    kode = Column(String(50), unique=True, nullable=False)
     name = Column(String(100), unique=True, nullable=False)
     created_at = Column(DateTime, default=lambda: datetime.now(pytz.UTC))
 
