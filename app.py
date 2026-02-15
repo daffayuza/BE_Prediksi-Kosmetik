@@ -11,6 +11,8 @@ import numpy as np
 from sqlalchemy import or_
 from functools import wraps
 from werkzeug.security import check_password_hash, generate_password_hash
+from statsmodels.tsa.arima.model import ARIMA
+import warnings
 
 app = Flask(__name__)
 
@@ -65,6 +67,34 @@ def login():
 def logout():
     session.clear()  # hapus session user
     return jsonify({"message": "Logout berhasil"}), 200
+
+# Helper function untuk ARIMA forecasting
+def forecast_variable(data_series, periods=1, order=(1,1,1)):
+    """
+    Forecast time series menggunakan ARIMA
+    
+    Args:
+        data_series: pandas Series dengan data historis
+        periods: jumlah periode yang akan di-forecast
+        order: (p,d,q) order untuk ARIMA
+    
+    Returns:
+        forecasted value (non-negative)
+    """
+    try:
+        # Minimal data check
+        if len(data_series) < 3:
+            return float(data_series.mean())
+        
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore")
+            model = ARIMA(data_series, order=order)
+            fitted = model.fit()
+            forecast = fitted.forecast(steps=periods)
+            return max(0, float(forecast.iloc[0]))  # ensure non-negative
+    except Exception as e:
+        # Fallback: gunakan mean jika ARIMA gagal
+        return float(data_series.mean())
 
 def login_required(f):
     @wraps(f)
@@ -939,6 +969,94 @@ def get_last_training_data(product_id):
         })
     finally:
         db.close()
+
+@app.route("/forecast-inputs/<int:product_id>", methods=["POST"])
+def forecast_inputs(product_id):
+    """
+    Forecast pengunjung, tayangan, pesanan untuk periode berikutnya
+    menggunakan ARIMA berdasarkan data training
+    
+    Request body (optional):
+    {
+        "tahun": 2024,
+        "bulan": 3
+    }
+    
+    Response:
+    {
+        "forecasted_pengunjung": 1250.5,
+        "forecasted_tayangan": 3400.2,
+        "forecasted_pesanan": 450.8,
+        "next_period": {
+            "tahun": 2024,
+            "bulan": 3
+        }
+    }
+    """
+    db = None
+    try:
+        db = SessionLocal()
+        
+        # Ambil semua data training untuk produk ini, urutkan berdasarkan waktu
+        training_data = (
+            db.query(TrainingData)
+            .filter(TrainingData.product_id == product_id)
+            .order_by(TrainingData.tahun.asc(), TrainingData.bulan.asc())
+            .all()
+        )
+        
+        if not training_data:
+            return jsonify({
+                "error": "Tidak ada data training untuk produk ini"
+            }), 400
+        
+        if len(training_data) < 3:
+            return jsonify({
+                "error": "Data training minimal 3 periode untuk forecasting"
+            }), 400
+        
+        # Konversi ke DataFrame
+        df = pd.DataFrame([{
+            "tahun": t.tahun,
+            "bulan": t.bulan,
+            "pengunjung": t.pengunjung,
+            "tayangan": t.tayangan,
+            "pesanan": t.pesanan
+        } for t in training_data])
+        
+        # Forecast untuk masing-masing variabel
+        forecasted_pengunjung = forecast_variable(df["pengunjung"])
+        forecasted_tayangan = forecast_variable(df["tayangan"])
+        forecasted_pesanan = forecast_variable(df["pesanan"])
+        
+        # Hitung periode berikutnya
+        last_data = training_data[-1]
+        next_bulan = last_data.bulan + 1
+        next_tahun = last_data.tahun
+        
+        if next_bulan > 12:
+            next_bulan = 1
+            next_tahun += 1
+        
+        return jsonify({
+            "forecasted_pengunjung": round(forecasted_pengunjung),
+            "forecasted_tayangan": round(forecasted_tayangan),
+            "forecasted_pesanan": round(forecasted_pesanan),
+            "next_period": {
+                "tahun": next_tahun,
+                "bulan": next_bulan
+            },
+            "message": "Forecast berhasil menggunakan ARIMA"
+        })
+        
+    except Exception as e:
+        return jsonify({
+            "error": f"Gagal melakukan forecast: {str(e)}"
+        }), 500
+    finally:
+        if db:
+            db.close()
+
 
 
 if __name__ == "__main__":
