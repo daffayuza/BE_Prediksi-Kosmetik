@@ -5,13 +5,13 @@ from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score, mean_absolute_error, mean_absolute_percentage_error
 from database import SessionLocal
 from models import TrainingData, ModelStore, ModelEvaluation, TestingData, User, Product, PredictionResult
+from statsmodels.tsa.arima.model import ARIMA
 from datetime import datetime
 from pytz import timezone
 import numpy as np
 from sqlalchemy import or_
 from functools import wraps
 from werkzeug.security import check_password_hash, generate_password_hash
-from statsmodels.tsa.arima.model import ARIMA
 import warnings
 
 app = Flask(__name__)
@@ -69,7 +69,7 @@ def logout():
     return jsonify({"message": "Logout berhasil"}), 200
 
 # Helper function untuk ARIMA forecasting
-def forecast_variable(data_series, periods=1, order=(1,1,1)):
+def forecast_variable(data_series, periods=1, order=(2,1,0)):
     """
     Forecast time series menggunakan ARIMA
     
