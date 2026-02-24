@@ -16,6 +16,7 @@ class Product(Base):
     training_data = relationship("TrainingData", cascade="all, delete-orphan", back_populates="product")
     testing_data = relationship("TestingData", cascade="all, delete-orphan", back_populates="product")
     model_store = relationship("ModelStore", cascade="all, delete-orphan", back_populates="product")
+    prediction_results = relationship("PredictionResult", cascade="all, delete-orphan", back_populates="product")
 
 class TrainingData(Base):
     __tablename__ = "training_data"
@@ -82,7 +83,7 @@ class PredictionResult(Base):
     __tablename__ = "prediction_results"
 
     id = Column(Integer, primary_key=True)
-    product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
+    product_id = Column(Integer, ForeignKey("products.id", ondelete="CASCADE"), nullable=False)
 
     tahun = Column(Integer, nullable=False)
     bulan = Column(Integer, nullable=False)
@@ -93,6 +94,8 @@ class PredictionResult(Base):
 
     predicted_terjual = Column(Float, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+    product = relationship("Product", back_populates="prediction_results")
 
     __table_args__ = (
         UniqueConstraint("product_id", "tahun", "bulan", name="uq_prediction_product_time"),
