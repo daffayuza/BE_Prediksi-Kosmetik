@@ -791,8 +791,8 @@ def delete_training_by_product(product_id):
 def create_product():
     try:
         data = request.json
-        name = data.get("name")
-        kode = data.get("kode")
+        name = str(data.get("name", "")).strip() if data.get("name") else ""
+        kode = str(data.get("kode", "")).strip() if data.get("kode") else ""
 
         if not name:
             return jsonify({"error": "Nama produk wajib diisi"}), 400
@@ -870,10 +870,16 @@ def update_product(product_id):
     """
     try:
         data = request.get_json()
-        if not data or "name" not in data:
+        if not data:
+            return jsonify({"error": "Data wajib diisi"}), 400
+
+        name = str(data.get("name", "")).strip() if data.get("name") else ""
+        kode = str(data.get("kode", "")).strip() if data.get("kode") else ""
+
+        if not name:
             return jsonify({"error": "Field 'name' wajib diisi"}), 400
         
-        if not data or "kode" not in data:
+        if not kode:
             return jsonify({"error": "Field 'kode' wajib diisi"}), 400
 
         db = SessionLocal()
@@ -885,7 +891,7 @@ def update_product(product_id):
 
             # Validasi duplikasi nama produk (kecuali produk yang sedang diupdate)
             existing_name = db.query(Product).filter(
-                Product.name == data["name"],
+                Product.name == name,
                 Product.id != product_id
             ).first()
             
@@ -894,7 +900,7 @@ def update_product(product_id):
 
             # Validasi duplikasi kode produk (kecuali produk yang sedang diupdate)
             existing_kode = db.query(Product).filter(
-                Product.kode == data["kode"],
+                Product.kode == kode,
                 Product.id != product_id
             ).first()
             
@@ -902,8 +908,8 @@ def update_product(product_id):
                 return jsonify({"error": "Produk dengan kode ini sudah ada"}), 400
 
             # Update nama dan kode produk
-            product.name = data["name"]
-            product.kode = data["kode"]
+            product.name = name
+            product.kode = kode
             db.commit()
 
             return jsonify({
@@ -1056,7 +1062,6 @@ def forecast_inputs(product_id):
     finally:
         if db:
             db.close()
-
 
 
 if __name__ == "__main__":
