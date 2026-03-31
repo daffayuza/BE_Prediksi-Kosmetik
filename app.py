@@ -70,17 +70,6 @@ def logout():
 
 # Helper function untuk ARIMA forecasting
 def forecast_variable(data_series, periods=1, order=(2,1,0)):
-    """
-    Forecast time series menggunakan ARIMA
-    
-    Args:
-        data_series: pandas Series dengan data historis
-        periods: jumlah periode yang akan di-forecast
-        order: (p,d,q) order untuk ARIMA
-    
-    Returns:
-        forecasted value (non-negative)
-    """
     try:
         # Minimal data check
         if len(data_series) < 3:
@@ -784,8 +773,6 @@ def delete_training_by_product(product_id):
         return jsonify({"error": str(e)}), 500
 
 
-
-
 # untuk menambahkan produk
 @app.route("/products", methods=["POST"])
 def create_product():
@@ -978,27 +965,6 @@ def get_last_training_data(product_id):
 
 @app.route("/forecast-inputs/<int:product_id>", methods=["POST"])
 def forecast_inputs(product_id):
-    """
-    Forecast pengunjung, tayangan, pesanan untuk periode berikutnya
-    menggunakan ARIMA berdasarkan data training
-    
-    Request body (optional):
-    {
-        "tahun": 2024,
-        "bulan": 3
-    }
-    
-    Response:
-    {
-        "forecasted_pengunjung": 1250.5,
-        "forecasted_tayangan": 3400.2,
-        "forecasted_pesanan": 450.8,
-        "next_period": {
-            "tahun": 2024,
-            "bulan": 3
-        }
-    }
-    """
     db = None
     try:
         db = SessionLocal()
