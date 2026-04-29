@@ -4,7 +4,7 @@ import pandas as pd
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score, mean_absolute_error, mean_absolute_percentage_error
 from database import SessionLocal
-from models import TrainingData, ModelStore, ModelEvaluation, TestingData, User
+from models import TrainingData, ModelStore, ModelEvaluation, TestingData, User, ProfitSetting, PredictionHistory
 from datetime import datetime
 from pytz import timezone
 import numpy as np
@@ -502,6 +502,103 @@ def delete_all_training_data():
 
         # Hapus semua data dari tabel training
         deleted_rows = db.query(TrainingData).delete()
+        db.commit()
+
+        db.close()
+        return jsonify({"message": f"{deleted_rows} data latih berhasil dihapus."})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    
+    
+@app.route("/profit", methods=["GET", "POST"])
+def profit_setting():
+    db = SessionLocal()
+
+    # --- GET untuk ambil nilai ---
+    if request.method == "GET":
+        profit = db.query(ProfitSetting).first()
+        if not profit:
+            # jika belum ada, buat default 0
+            profit = ProfitSetting(profit_per_unit=0.0)
+            db.add(profit)
+            db.commit()
+            db.refresh(profit)
+
+        db.close()
+        return jsonify({"profit_per_unit": profit.profit_per_unit}), 200
+
+    # --- POST untuk update / simpan ---
+    if request.method == "POST":
+        data = request.get_json()
+        new_profit = data.get("profit_per_unit")
+
+        if new_profit is None:
+            db.close()
+            return jsonify({"error": "Nilai profit_per_unit tidak boleh kosong"}), 400
+
+        profit = db.query(ProfitSetting).first()
+        if not profit:
+            profit = ProfitSetting(profit_per_unit=new_profit)
+            db.add(profit)
+        else:
+            profit.profit_per_unit = new_profit
+
+        db.commit()
+        db.refresh(profit)
+        db.close()
+
+        return jsonify({"message": "Profit per unit diperbarui", "profit_per_unit": profit.profit_per_unit}), 200
+    
+@app.route("/save_prediction", methods=["POST"])
+def save_prediction():
+    data = request.get_json()
+    db = SessionLocal()
+    try:
+        new_record = PredictionHistory(
+            visitors=data["visitors"],
+            page_views=data["page_views"],
+            orders=data["orders"],
+            predicted_units=data["predicted_units"],
+            profit_per_unit=data["profit_per_unit"],
+            total_profit=data["total_profit"],
+        )
+        db.add(new_record)
+        db.commit()
+        return jsonify({"message": "Hasil prediksi berhasil disimpan"}), 201
+    except Exception as e:
+        db.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        db.close()
+
+
+@app.route("/prediction_history", methods=["GET"])
+def get_prediction_history():
+    db = SessionLocal()
+    try:
+        records = db.query(PredictionHistory).order_by(PredictionHistory.created_at.desc()).all()
+        return jsonify([
+            {
+                "id": r.id,
+                "visitors": r.visitors,
+                "page_views": r.page_views,
+                "orders": r.orders,
+                "predicted_units": r.predicted_units,
+                "profit_per_unit": r.profit_per_unit,
+                "total_profit": r.total_profit,
+                "created_at": r.created_at.strftime("%Y-%m-%d %H:%M:%S")
+            } for r in records
+        ])
+    finally:
+        db.close()
+
+@app.route("/predictHistory/delete-all", methods=["DELETE"])
+def delete_all_predictHistory_data():
+    try:
+        db = SessionLocal()
+
+        # Hapus semua data dari tabel training
+        deleted_rows = db.query(PredictionHistory).delete()
         db.commit()
 
         db.close()

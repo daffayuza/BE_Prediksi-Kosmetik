@@ -46,3 +46,20 @@ class User(Base):
     username = Column(String(50), unique=True, nullable=False)
     password_hash = Column(String(255), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+class ProfitSetting(Base):
+    __tablename__ = 'profit_settings'
+    id = Column(Integer, primary_key=True, index=True)
+    profit_per_unit = Column(Float, nullable=False, default=0)
+
+class PredictionHistory(Base):
+    __tablename__ = "prediction_history"
+
+    id = Column(Integer, primary_key=True, index=True)
+    visitors = Column(Integer)
+    page_views = Column(Integer)
+    orders = Column(Integer)
+    predicted_units = Column(Float)
+    profit_per_unit = Column(Float)
+    total_profit = Column(Float)
+    created_at = Column(DateTime, default=datetime.utcnow)
